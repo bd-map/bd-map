@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>বাংলাদেশ ৩D ম্যাপ: তেলের পাম্প ও থানা</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root{
+    --ink:#10222b; --panel:#fbfaf7; --line:#d9d5c9; --muted:#5c6b72;
+    --fuel:#f2a007; --fuel-d:#8a5a00; --police:#1f5fd1; --route:#0f9d78; --me:#e5383b;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;font-family:"Hind Siliguri",system-ui,sans-serif;color:var(--ink)}
+  #map{position:absolute;inset:0}
+  .panel{
+    position:absolute;z-index:5;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;box-shadow:0 6px 24px rgba(16,34,43,.18);
+  }
+  #control{top:12px;left:12px;width:340px;max-width:calc(100% - 24px);padding:14px 14px 12px}
+  h1{font-size:19px;line-height:1.25;margin:0 0 2px;font-weight:700}
+  .sub{font-size:13px;color:var(--muted);margin:0 0 10px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+  button,select{
+    font:inherit;font-size:14px;border-radius:8px;border:1px solid var(--line);background:#fff;
+    padding:7px 10px;cursor:pointer;color:var(--ink)
+  }
+  button:hover{border-color:var(--ink)}
+  button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #7fb2ff;outline-offset:1px}
+  button.primary{background:var(--ink);color:#fff;border-color:var(--ink);font-weight:600}
+  button.fuel{border-color:var(--fuel);background:#fff7e0}
+  button.police{border-color:var(--police);background:#e9f0ff}
+  .chk{display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer}
+  .dot{width:12px;height:12px;border-radius:50%;display:inline-block}
+  #status{font-size:13px;color:var(--muted);min-height:20px;margin-top:6px}
+  #status.err{color:#b3261e}
+  #route{
+    right:12px;top:12px;width:340px;max-width:calc(100% - 24px);max-height:calc(100% - 24px);
+    overflow:auto;padding:14px;display:none
+  }
+  #route h2{margin:0 0 2px;font-size:17px}
+  #route .sum{font-size:15px;font-weight:600;color:var(--route);margin-bottom:8px}
+  #route ol{margin:0;padding-left:20px;font-size:14px;line-height:1.5}
+  #route li{margin-bottom:4px}
+  #route li small{color:var(--muted)}
+  .close{float:right;padding:2px 8px}
+  .maplibregl-popup-content{font-family:"Hind Siliguri",sans-serif;padding:12px 14px;border-radius:10px;min-width:190px}
+  .pop-t{font-weight:700;font-size:15px;margin-bottom:2px}
+  .pop-k{font-size:13px;color:var(--muted);margin-bottom:8px}
+  .me-dot{
+    width:18px;height:18px;border-radius:50%;background:var(--me);border:3px solid #fff;
+    box-shadow:0 0 0 0 rgba(229,56,59,.6);animation:pulse 2s infinite
+  }
+  @keyframes pulse{70%{box-shadow:0 0 0 18px rgba(229,56,59,0)}100%{box-shadow:0 0 0 0 rgba(229,56,59,0)}}
+  @media (prefers-reduced-motion:reduce){.me-dot{animation:none}}
+  @media (max-width:700px){
+    #control{top:auto;bottom:calc(10px + env(safe-area-inset-bottom,0px));left:10px;width:calc(100% - 20px);max-width:none}
+    #route{top:calc(10px + env(safe-area-inset-top,0px));right:10px;width:calc(100% - 20px);max-height:40%}
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="control" class="panel">
+  <h1>বাংলাদেশ ৩D ম্যাপ</h1>
+  <p class="sub">তেলের পাম্প ও থানা খুঁজুন, আপনার লোকেশন থেকে রোড ধরে যান</p>
+
+  <div class="row">
+    <button id="btnLocate" class="primary">আমার লোকেশন</button>
+    <button id="btnFuel" class="fuel">কাছের পাম্প</button>
+    <button id="btnPolice" class="police">কাছের থানা</button>
+  </div>
+
+  <div class="row">
+    <label class="chk"><input type="checkbox" id="fFuel" checked><span class="dot" style="background:var(--fuel)"></span>তেলের পাম্প</label>
+    <label class="chk"><input type="checkbox" id="fPolice" checked><span class="dot" style="background:var(--police)"></span>থানা / পুলিশ</label>
+  </div>
+
+  <div class="row">
+    <select id="division" aria-label="বিভাগ বেছে নিন">
+      <option value="">বিভাগে যান…</option>
+      <option value="90.4125,23.8103">ঢাকা</option>
+      <option value="91.7832,22.3569">চট্টগ্রাম</option>
+      <option value="91.8687,24.8949">সিলেট</option>
+      <option value="89.5403,22.8456">খুলনা</option>
+      <option value="89.2372,24.3636">রাজশাহী</option>
+      <option value="89.2500,25.7439">রংপুর</option>
+      <option value="90.3667,22.7010">বরিশাল</option>
+      <option value="90.4203,24.7471">ময়মনসিংহ</option>
+    </select>
+    <button id="btn3d">২D / ৩D</button>
+  </div>
+  <div id="status">তথ্য দেখতে জুম করুন (১১ বা তার বেশি) অথবা বিভাগ বেছে নিন।</div>
+</div>
+
+<div id="route" class="panel" aria-live="polite">
+  <button class="close" id="routeClose" aria-label="বন্ধ করুন">✕</button>
+  <h2 id="routeTitle"></h2>
+  <div class="sum" id="routeSum"></div>
+  <ol id="routeSteps"></ol>
+</div>
+
+<script>
+(function(){
+  const OVERPASS=[
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter"
+  ];
+  const OSRM="https://router.project-osrm.org/route/v1/driving/";
+  const KIND_BN={fuel:"তেলের পাম্প",police:"থানা / পুলিশ"};
+  const $=id=>document.getElementById(id);
+
+  const map=new maplibregl.Map({
+    container:"map",
+    style:"https://tiles.openfreemap.org/styles/liberty",
+    center:[90.35,23.8],zoom:6.6,pitch:50,bearing:-8,maxPitch:75,
+    attributionControl:{compact:true}
+  });
+  map.addControl(new maplibregl.NavigationControl({visualizePitch:true}),"bottom-right");
+
+  const pois=new Map();          // id -> {id,kind,name,lng,lat,extra}
+  const fetched=[];              // bboxes already loaded [s,w,n,e]
+  let userPos=null, userMarker=null, watchId=null, mapReady=false, is3D=true, loading=false;
+
+  const empty={type:"FeatureCollection",features:[]};
+
+  function setStatus(msg,err){const s=$("status");s.textContent=msg;s.className=err?"err":""}
+
+  // ---------- map layers ----------
+  map.on("load",()=>{
+    mapReady=true;
+    map.addSource("poi",{type:"geojson",data:empty});
+    map.addSource("pillar",{type:"geojson",data:empty});
+    map.addSource("route",{type:"geojson",data:empty});
+
+    map.addLayer({id:"route-casing",type:"line",source:"route",
+      layout:{"line-cap":"round","line-join":"round"},
+      paint:{"line-color":"#ffffff","line-width":10}});
+    map.addLayer({id:"route-line",type:"line",source:"route",
+      layout:{"line-cap":"round","line-join":"round"},
+      paint:{"line-color":"#0f9d78","line-width":6}});
+
+    map.addLayer({id:"poi-pillar",type:"fill-extrusion",source:"pillar",minzoom:12,
+      paint:{
+        "fill-extrusion-color":["match",["get","kind"],"fuel","#f2a007","#1f5fd1"],
+        "fill-extrusion-height":["get","h"],
+        "fill-extrusion-base":0,
+        "fill-extrusion-opacity":0.95
+      }});
+    map.addLayer({id:"poi-circle",type:"circle",source:"poi",
+      paint:{
+        "circle-radius":["interpolate",["linear"],["zoom"],7,3,11,6,15,9],
+        "circle-color":["match",["get","kind"],"fuel","#f2a007","#1f5fd1"],
+        "circle-stroke-color":"#fff","circle-stroke-width":2,
+        "circle-pitch-alignment":"map",
+        "circle-translate":[0,0]
+      }});
+    map.addLayer({id:"poi-label",type:"symbol",source:"poi",minzoom:14,
+      layout:{
+        "text-field":["get","name"],
+        "text-font":["Noto Sans Regular"],
+        "text-size":12,"text-offset":[0,1.4],"text-anchor":"top","text-optional":true
+      },
+      paint:{"text-color":"#10222b","text-halo-color":"#fff","text-halo-width":1.6}});
+
+    map.on("click","poi-circle",onPoiClick);
+    map.on("click","poi-pillar",onPoiClick);
+    ["poi-circle","poi-pillar"].forEach(l=>{
+      map.on("mouseenter",l,()=>map.getCanvas().style.cursor="pointer");
+      map.on("mouseleave",l,()=>map.getCanvas().style.cursor="");
+    });
+    applyFilter();
+    maybeLoad();
+  });
+
+  function activeKinds(){
+    const k=[];
+    if($("fFuel").checked)k.push("fuel");
+    if($("fPolice").checked)k.push("police");
+    return k;
+  }
+  function applyFilter(){
+    if(!mapReady)return;
+    const f=["in",["get","kind"],["literal",activeKinds()]];
+    ["poi-circle","poi-pillar","poi-label"].forEach(l=>map.setFilter(l,f));
+  }
+  $("fFuel").onchange=$("fPolice").onchange=applyFilter;
+
+  function squareAround(lng,lat,m){
+    const dy=m/110540, dx=m/(111320*Math.cos(lat*Math.PI/180));
+    return [[[lng-dx,lat-dy],[lng+dx,lat-dy],[lng+dx,lat+dy],[lng-dx,lat+dy],[lng-dx,lat-dy]]];
+  }
+  function refreshSources(){
+    if(!mapReady)return;
+    const pts=[],pil=[];
+    pois.forEach(p=>{
+      const props={id:p.id,kind:p.kind,name:p.name};
+      pts.push({type:"Feature",properties:props,geometry:{type:"Point",coordinates:[p.lng,p.lat]}});
+      pil.push({type:"Feature",properties:{...props,h:p.kind==="fuel"?55:70},
+        geometry:{type:"Polygon",coordinates:squareAround(p.lng,p.lat,9)}});
+    });
+    map.getSource("poi").setData({type:"FeatureCollection",features:pts});
+    map.getSource("pillar").setData({type:"FeatureCollection",features:pil});
+    updateCount();
+  }
+  function updateCount(){
+    let f=0,p=0;pois.forEach(x=>x.kind==="fuel"?f++:p++);
+    setStatus(`লোড হয়েছে: ${f.toLocaleString("bn-BD")}টি পাম্প, ${p.toLocaleString("bn-BD")}টি থানা`);
+  }
+
+  // ---------- data from OpenStreetMap (Overpass) ----------
+  function buildQuery(area){
+    return `[out:json][timeout:30];(
+      nwr["amenity"="fuel"]${area};
+      nwr["amenity"="police"]${area};
+    );out center tags;`;
+  }
+  async function overpass(query){
+    let lastErr;
+    for(const url of OVERPASS){
+      try{
+        const r=await fetch(url,{method:"POST",body:"data="+encodeURIComponent(query)});
+        if(!r.ok)throw new Error("HTTP "+r.status);
+        return await r.json();
+      }catch(e){lastErr=e}
+    }
+    throw lastErr;
+  }
+  function ingest(json){
+    (json.elements||[]).forEach(el=>{
+      const t=el.tags||{};
+      const kind=t.amenity==="fuel"?"fuel":t.amenity==="police"?"police":null;
+      if(!kind)return;
+      const lat=el.lat??(el.center&&el.center.lat), lng=el.lon??(el.center&&el.center.lon);
+      if(lat==null||lng==null)return;
+      const id=el.type[0]+el.id;
+      const name=t["name:bn"]||t.name||t["name:en"]||t.brand||t.operator||(kind==="fuel"?"তেলের পাম্প":"থানা");
+      pois.set(id,{id,kind,name,lng,lat,extra:t.operator||t.brand||""});
+    });
+  }
+  function covered(b){
+    return fetched.some(f=>b.s>=f.s&&b.w>=f.w&&b.n<=f.n&&b.e<=f.e);
+  }
+  async function loadBox(b){
+    if(loading)return;
+    loading=true;setStatus("তথ্য লোড হচ্ছে…");
+    try{
+      const j=await overpass(buildQuery(`(${b.s},${b.w},${b.n},${b.e})`));
+      ingest(j);fetched.push(b);refreshSources();
+    }catch(e){setStatus("তথ্য আনা যায়নি। ইন্টারনেট দেখে আবার জুম বা ম্যাপ সরান।",true)}
+    loading=false;
+  }
+  let timer=null;
+  function maybeLoad(){
+    clearTimeout(timer);
+    timer=setTimeout(()=>{
+      if(!mapReady)return;
+      if(map.getZoom()<11){setStatus("তথ্য দেখতে আরও জুম করুন (১১ বা তার বেশি)।");return}
+      const bb=map.getBounds();
+      const b={s:bb.getSouth(),w:bb.getWest(),n:bb.getNorth(),e:bb.getEast()};
+      if(covered(b)){updateCount();return}
+      const padY=(b.n-b.s)*0.25,padX=(b.e-b.w)*0.25;
+      loadBox({s:b.s-padY,w:b.w-padX,n:b.n+padY,e:b.e+padX});
+    },500);
+  }
+  map.on("moveend",maybeLoad);
+
+  // ---------- live location ----------
+  function haversine(a,b){
+    const R=6371e3,rad=Math.PI/180;
+    const dLat=(b.lat-a.lat)*rad,dLng=(b.lng-a.lng)*rad;
+    const x=Math.sin(dLat/2)**2+Math.cos(a.lat*rad)*Math.cos(b.lat*rad)*Math.sin(dLng/2)**2;
+    return 2*R*Math.asin(Math.sqrt(x));
+  }
+  function fmtDist(m){return m<1000?Math.round(m).toLocaleString("bn-BD")+" মিটার":(m/1000).toFixed(1).replace(/\d/g,d=>"০১২৩৪৫৬৭৮৯"[d])+" কিমি"}
+  function fmtTime(s){
+    const m=Math.round(s/60);
+    if(m<60)return m.toLocaleString("bn-BD")+" মিনিট";
+    return Math.floor(m/60).toLocaleString("bn-BD")+" ঘণ্টা "+(m%60).toLocaleString("bn-BD")+" মিনিট";
+  }
+
+  function startLocate(cb){
+    if(!navigator.geolocation){setStatus("এই ব্রাউজারে লোকেশন সাপোর্ট নেই।",true);return}
+    setStatus("আপনার লোকেশন খোঁজা হচ্ছে…");
+    let first=true;
+    if(watchId!=null)navigator.geolocation.clearWatch(watchId);
+    watchId=navigator.geolocation.watchPosition(pos=>{
+      userPos={lng:pos.coords.longitude,lat:pos.coords.latitude};
+      if(!userMarker){
+        const el=document.createElement("div");el.className="me-dot";el.title="আপনি এখানে";
+        userMarker=new maplibregl.Marker({element:el}).setLngLat([userPos.lng,userPos.lat]).addTo(map);
+      }else userMarker.setLngLat([userPos.lng,userPos.lat]);
+      if(first){
+        first=false;
+        map.flyTo({center:[userPos.lng,userPos.lat],zoom:14,pitch:60,duration:2200});
+        loadAround(userPos).then(()=>cb&&cb());
+      }
+    },err=>{
+      const m={1:"লোকেশনের অনুমতি দেওয়া হয়নি। ব্রাউজারের সেটিংসে অনুমতি দিন।",2:"লোকেশন পাওয়া যায়নি।",3:"লোকেশন পেতে বেশি সময় লাগছে।"};
+      setStatus(m[err.code]||"লোকেশন ত্রুটি।",true);
+    },{enableHighAccuracy:true,maximumAge:5000,timeout:20000});
+  }
+  async function loadAround(p){
+    setStatus("আশেপাশের তথ্য লোড হচ্ছে…");
+    try{
+      const j=await overpass(buildQuery(`(around:15000,${p.lat},${p.lng})`));
+      ingest(j);
+      const d=0.14;fetched.push({s:p.lat-d,w:p.lng-d,n:p.lat+d,e:p.lng+d});
+      refreshSources();
+    }catch(e){setStatus("আশেপাশের তথ্য আনা যায়নি।",true)}
+  }
+  $("btnLocate").onclick=()=>startLocate();
+
+  function nearest(kind){
+    if(!userPos){startLocate(()=>nearest(kind));return}
+    let best=null,bd=Infinity;
+    pois.forEach(p=>{
+      if(p.kind!==kind)return;
+      const d=haversine(userPos,p);
+      if(d<bd){bd=d;best=p}
+    });
+    if(!best){setStatus("১৫ কিমির মধ্যে "+KIND_BN[kind]+" পাওয়া যায়নি।",true);return}
+    routeTo(best.id);
+  }
+  $("btnFuel").onclick=()=>nearest("fuel");
+  $("btnPolice").onclick=()=>nearest("police");
+
+  // ---------- popup + routing ----------
+  function onPoiClick(e){
+    const id=e.features[0].properties.id,p=pois.get(id);if(!p)return;
+    const dist=userPos?` · আপনার থেকে ${fmtDist(haversine(userPos,p))} (সোজা)`:"";
+    new maplibregl.Popup({offset:14,closeButton:true})
+      .setLngLat([p.lng,p.lat])
+      .setHTML(`<div class="pop-t"></div><div class="pop-k"></div>
+        <button class="primary" data-go="${id}">এখানে যাওয়ার রাস্তা</button>`)
+      .on("open",function(){
+        const c=this.getElement();
+        c.querySelector(".pop-t").textContent=p.name;
+        c.querySelector(".pop-k").textContent=KIND_BN[p.kind]+dist;
+        c.querySelector("[data-go]").onclick=()=>{this.remove();routeTo(id)};
+      })
+      .addTo(map);
+  }
+
+  const MOD={left:"বামে",right:"ডানে","slight left":"হালকা বামে","slight right":"হালকা ডানে",
+    "sharp left":"তীক্ষ্ণ বামে","sharp right":"তীক্ষ্ণ ডানে",straight:"সোজা",uturn:"ইউ-টার্ন নিয়ে"};
+  function instruction(s){
+    const m=s.maneuver||{},road=s.name?(" "+s.name):"";
+    const mod=MOD[m.modifier]||"";
+    switch(m.type){
+      case "depart":return "রওনা দিন"+(road?" —"+road+" ধরে":"");
+      case "arrive":return "গন্তব্যে পৌঁছেছেন";
+      case "roundabout":case "rotary":return "গোলচত্বরে ঢুকে"+road+" ধরুন";
+      case "turn":return mod+" ঘুরুন"+(road?" —"+road+" ধরে":"");
+      case "end of road":return "রাস্তার শেষে "+mod+" ঘুরুন"+road;
+      case "fork":return "মোড়ে "+mod+" যান"+road;
+      case "merge":return "মিশে যান"+road;
+      case "on ramp":case "off ramp":return "র‍্যাম্প নিন"+road;
+      default:return (mod?mod+" ":"")+"চলুন"+(road?" —"+road+" ধরে":"");
+    }
+  }
+
+  async function routeTo(id){
+    const p=pois.get(id);if(!p)return;
+    if(!userPos){
+      setStatus("আগে লোকেশন চালু করুন, তারপর রাস্তা দেখাব।");
+      startLocate(()=>routeTo(id));return;
+    }
+    setStatus("রাস্তা খোঁজা হচ্ছে…");
+    try{
+      const url=`${OSRM}${userPos.lng},${userPos.lat};${p.lng},${p.lat}?overview=full&geometries=geojson&steps=true`;
+      const r=await fetch(url);if(!r.ok)throw new Error();
+      const j=await r.json();
+      if(!j.routes||!j.routes.length)throw new Error();
+      const rt=j.routes[0];
+      map.getSource("route").setData({type:"Feature",geometry:rt.geometry});
+      const c=rt.geometry.coordinates;
+      const b=c.reduce((bb,x)=>bb.extend(x),new maplibregl.LngLatBounds(c[0],c[0]));
+      map.fitBounds(b,{padding:{top:80,bottom:200,left:60,right:window.innerWidth>700?380:60},pitch:45,duration:1800});
+
+      $("routeTitle").textContent=p.name+" ("+KIND_BN[p.kind]+")";
+      $("routeSum").textContent=fmtDist(rt.distance)+" · প্রায় "+fmtTime(rt.duration);
+      const ol=$("routeSteps");ol.innerHTML="";
+      rt.legs[0].steps.forEach(s=>{
+        const li=document.createElement("li");
+        li.appendChild(document.createTextNode(instruction(s)+" "));
+        if(s.distance>0){const sm=document.createElement("small");sm.textContent="("+fmtDist(s.distance)+")";li.appendChild(sm)}
+        ol.appendChild(li);
+      });
+      $("route").style.display="block";
+      updateCount();
+    }catch(e){setStatus("রাস্তা বের করা যায়নি। পরে আবার চেষ্টা করুন।",true)}
+  }
+  $("routeClose").onclick=()=>{
+    $("route").style.display="none";
+    if(mapReady)map.getSource("route").setData(empty);
+  };
+
+  // ---------- misc controls ----------
+  $("division").onchange=e=>{
+    if(!e.target.value)return;
+    const [lng,lat]=e.target.value.split(",").map(Number);
+    map.flyTo({center:[lng,lat],zoom:11.5,pitch:is3D?60:0,duration:2500});
+  };
+  $("btn3d").onclick=()=>{
+    is3D=!is3D;
+    map.easeTo({pitch:is3D?60:0,bearing:is3D?map.getBearing():0,duration:900});
+  };
+})();
+</script>
+</body>
+</html>
